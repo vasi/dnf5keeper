@@ -81,8 +81,11 @@ class AptKeeper
     backup(EXTENDED_STATES)
     backup(DEBFOSTER)
 
-    EXTENDED_STATES.delete if EXTENDED_STATES.file?
-    system('apt-mark', 'auto', *(installed - @keepers).to_a, out: :close)
+    new_manual = @auto & @keepers
+    new_auto = @manual - @keepers
+    system('apt-mark', 'manual', *new_manual.to_a, out: :close) if new_manual.any?
+    system('apt-mark', 'auto', *new_auto.to_a, out: :close) if new_auto.any?
+
     if DEBFOSTER.file?
       DEBFOSTER.open('w') do |f|
         @keepers.sort.each { |p| f.puts p }
