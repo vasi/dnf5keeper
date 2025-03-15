@@ -1,0 +1,165 @@
+#!/usr/bin/env ruby
+require 'etc'
+require 'pathname'
+require 'set'
+require 'tempfile'
+
+# Declarative package management with apt!
+
+class AptKeeper
+  HOME = Dir.home(Etc.getlogin) # Get user's home dir even if using sudo
+  CONFDIR = Pathname.new(HOME).join('.config', 'aptkeeper')
+  EXTENDED_STATES = Pathname.new('/var/lib/apt/extended_states')
+  DEBFOSTER = Pathname.new('/var/lib/debfoster/keepers')
+
+  attr_reader :keepers
+
+  def read_package_list(path)
+    return Set.new unless path.file?
+    path.readlines
+    .map { |l| l.sub(/#.*$/, '').strip }
+    .reject(&:empty?)
+    .to_set
+  end
+  
+  def initialize
+    CONFDIR.mkpath
+
+    @auto = IO.popen('apt-mark showauto').readlines.map(&:chomp).to_set
+    @manual = IO.popen('apt-mark showmanual').readlines.map(&:chomp).to_set
+    @keepers = CONFDIR.children
+      .select { |p| p.file? && p.extname == '.keep' }
+      .reduce(Set.new) { |ks, p| ks.merge(read_package_list(p)) }
+  end
+
+  def installed
+    @auto + @manual
+  end
+
+  def print(pkgs, header = nil)
+    puts header if header
+    prefix = header ? "  " : ""
+    pkgs.sort.each { |p| puts "#{prefix}#{p}" }
+  end
+
+  def missing
+    @keepers - installed
+  end
+
+  def simulate_autoremove(auto)
+    states = Tempfile.new('states')
+    system('apt-mark', '-f', states.path, 'auto', *auto, out: :close)
+    removed = Set.new
+    cmd = ['apt-get', '--simulate', '-o', "dir::state::extended_states=#{states.path}", 'autoremove']
+    IO.popen(cmd).each do |line|
+      md = /^Remv (\S*)/.match(line) or next
+      removed << md[1]
+    end
+    states.unlink
+    removed
+  end
+
+  def toplevel
+    IO.popen(['aptitude', 'search', '~i!~Rdepends:~i', '-F' '%p'])
+      .readlines.map(&:chomp).to_set
+  end
+
+  def unneeded
+    simulate_autoremove(installed - @keepers)
+  end
+
+  def leaves
+    unneeded & toplevel
+  end
+
+  def backup(file)
+    bak = Pathname.new(file.to_s + '.bak')
+    FileUtils.cp(file, bak) if file.file?
+  end
+
+  def write_root_keepers
+    backup(EXTENDED_STATES)
+    backup(DEBFOSTER)
+
+    EXTENDED_STATES.delete if EXTENDED_STATES.file?
+    system('apt-mark', 'auto', *(installed - @keepers).to_a, out: :close)
+    if DEBFOSTER.file?
+      DEBFOSTER.open('w') do |f|
+        @keepers.sort.each { |p| f.puts p }
+      end
+    end
+  end
+
+  def add_keepers(reason, packages)
+    CONFDIR.join('tmp.keep').open('a') do |f|
+      packages.each { |p| f.puts "#{p} # #{reason}" }
+    end
+  end
+end
+
+ak = AptKeeper.new
+orig_argv = ARGV.dup
+rerun_root = ->(list, &block) do
+  if list.empty?
+    $stderr.puts "Nothing to do"
+    return 
+  end
+  if Process.uid == 0
+    ak.write_root_keepers
+    block[list.sort]
+  else
+    exec('sudo', __FILE__, *orig_argv)
+  end
+end
+
+arg = ARGV.shift
+case arg
+when 'keepers'
+  ak.print(ak.keepers)
+when 'missing'
+  ak.print(ak.missing)
+when 'unneeded'
+  ak.print(ak.unneeded)
+when 'candidates'
+  ak.print(ak.leaves)
+when 'diff'
+  ak.print(ak.missing, "To install:")
+  ak.print(ak.unneeded, "To remove:")
+when 'install'
+  rerun_root[ak.missing] { |ps| exec('apt', 'install', *ps) }
+when 'remove'
+  rerun_root[ak.unneeded] { exec('apt', 'autoremove') }
+when 'sync'
+  rerun_root[ak.missing + ak.unneeded] do
+    exec('apt', '--autoremove', 'install', *ak.missing)
+  end
+when 'add'
+  reason = ARGV.shift
+  adding = ARGV
+  if adding.empty?
+    $stderr.puts "Usage: aptkeeper add REASON PACKAGE [PACKAGE...]"
+    exit 2
+  end
+  ak.add_keepers(reason, adding) unless Process.uid == 0
+  rerun_root[adding] do |ps|
+    exec('apt', 'install', *ps)
+  end
+else
+  $stderr.puts <<~EOD
+    Usage: aptkeeper [command]
+    Commands:
+      keepers - list packages in .keep files
+
+      missing - list packages that need installing to match .keep files
+      unneeded - list packages that need removal to match .keep files
+      candidates - list top-level packages that need removal
+      diff - list packages that need installing or removal
+
+      install - install missing packages
+      remove - remove unneeded packages
+      sync - install missing and remove unneeded packages
+
+      add REASON PACKAGE ... - add packages to keepers, and install them
+    EOD
+  exit 2
+end
