@@ -102,6 +102,7 @@ end
 
 ak = AptKeeper.new
 orig_argv = ARGV.dup
+FORCE_RERUN = ['force']
 rerun_root = ->(list, &block) do
   if list.empty?
     $stderr.puts "Nothing to do"
@@ -126,9 +127,10 @@ when 'unneeded'
 when 'candidates'
   ak.print(ak.leaves)
 when 'diff'
-  puts "Nothing to do!" unless ak.missing.any? || ak.unneeded.any?
+  unneeded = ak.unneeded
+  puts "Nothing to do" unless ak.missing.any? || unneeded.any?
   ak.print(ak.missing, "To install:") if ak.missing.any?
-  ak.print(ak.unneeded, "To remove:") if ak.unneeded.any?
+  ak.print(unneeded, "To remove:") if unneeded.any?
 when 'install'
   rerun_root[ak.missing] { |ps| exec('apt', 'install', *ps) }
 when 'remove'
@@ -137,6 +139,8 @@ when 'sync'
   rerun_root[ak.missing + ak.unneeded] do
     exec('apt', '--autoremove', 'install', *ak.missing)
   end
+when 'update-apt'
+  rerun_root[FORCE_RERUN] { }
 when 'add'
   reason = ARGV.shift
   adding = ARGV
@@ -162,6 +166,7 @@ else
       install - install missing packages
       remove - remove unneeded packages
       sync - install missing and remove unneeded packages
+      update-apt - update apt-mark / debfoster database
 
       add REASON PACKAGE ... - add packages to keepers, and install them
     EOD
