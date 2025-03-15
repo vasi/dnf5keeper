@@ -123,8 +123,9 @@ when 'unneeded'
 when 'candidates'
   ak.print(ak.leaves)
 when 'diff'
-  ak.print(ak.missing, "To install:")
-  ak.print(ak.unneeded, "To remove:")
+  puts "Nothing to do!" unless ak.missing.any? || ak.unneeded.any?
+  ak.print(ak.missing, "To install:") if ak.missing.any?
+  ak.print(ak.unneeded, "To remove:") if ak.unneeded.any?
 when 'install'
   rerun_root[ak.missing] { |ps| exec('apt', 'install', *ps) }
 when 'remove'
