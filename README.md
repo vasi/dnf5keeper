@@ -27,7 +27,7 @@ It can be hard to remember why I've installed all the packages on my system. Thi
 
 * Put your aptkeeper directory in git! Then you'll have a history of your changes.
 * Use comments to remind yourself why you wanted a package, so you know whether you still need it.
-* Need a single package, and too lazy to open your editor? Just run `aptkeeper add REASON PACKAGE`, and it will automatically put it in `tmp.keep` and install it. Then you can organize it properly later, when you have more time.
+* Need a single package, and too lazy to open your editor? Just run `aptkeeper add foo "my reason" mypackage`, and it will automatically put it in `foo.keep` and install it. Then you can organize it properly later, when you have more time.
 * Put packages required for a project in a separate .keep file, so you remember that they're related. Now they're easy to remove all at once!
    * Similarly, you can put related packages nearby each other, so they're easy to block-comment and get rid of.
 * There's no harm in listing a package twice! Eg: if it's needed for multiple projects, you can list it in multiple .keep files.
@@ -46,9 +46,9 @@ Install and remove packages to match the
 
 Print the packages that would be installed or removed by a sync
 
-#### aptkeeper add REASON PACKAGE [PACKAGE...]
+#### aptkeeper add BASENAME REASON PACKAGE [PACKAGE...]
 
-Adds packages to tmp.keep with a comment, and installs them. Good for small changes when you're too busy to open an editor.
+Adds packages to BASENAME.keep with a comment, and installs them. Good for small changes when you're too busy to open an editor.
 
 #### aptkeeper candidates
 

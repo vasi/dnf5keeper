@@ -93,9 +93,11 @@ class AptKeeper
     end
   end
 
-  def add_keepers(reason, packages)
-    CONFDIR.join('tmp.keep').open('a') do |f|
-      packages.each { |p| f.puts "#{p} # #{reason}" }
+  def add_keepers(basename, reason, packages)
+    basename = File.basename(basename, '.keep') # in case user accidentally added .keep
+    comment = reason.empty? ? "" : " # #{reason}"
+    CONFDIR.join(basename + '.keep').open('a') do |f|
+      packages.each { |p| f.puts "#{p}#{comment}" }
     end
   end
 end
@@ -142,13 +144,12 @@ when 'sync'
 when 'update-apt'
   rerun_root[FORCE_RERUN] { }
 when 'add'
-  reason = ARGV.shift
-  adding = ARGV
+  basename, reason, *adding = ARGV
   if adding.empty?
-    $stderr.puts "Usage: aptkeeper add REASON PACKAGE [PACKAGE...]"
+    $stderr.puts "Usage: aptkeeper add BASENAME REASON PACKAGE [PACKAGE...]"
     exit 2
   end
-  ak.add_keepers(reason, adding) unless Process.uid == 0
+  ak.add_keepers(basename, reason, adding) unless Process.uid == 0
   rerun_root[adding] do |ps|
     exec('apt', 'install', *ps)
   end
