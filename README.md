@@ -13,11 +13,11 @@ It can be hard to remember why I've installed all the packages on my system. Thi
 
 ## How to use this
 
-* Make sure you have some packages installed: `ruby` and `aptitude`.
+* Make sure you have some basic packages installed: `ruby` and `aptitude`.
 * Copy `aptkeeper` somewhere in your PATH, for example ~/bin or /usr/local/bin.
 * Create a directory ~/.config/aptkeeper to declare your packages
   * Inside that directory, create one or more files with the extension `.keep`.
-  * Each file should contain a list of packages you want to keep installed. Comments starting with '#' are allowed, as are blank lines.
+  * Each file should contain a list of packages you want to keep installed, one per line. Comments starting with '#' are allowed, as are blank lines.
   * You can get a reasonable initial list of packages with `aptkeeper candidates`
 * Once you think you're satisfied, run `aptkeeper diff`. It will tell you what it thinks needs removing or installing.
   * Then, run `aptkeeper sync` to do the installation or removal! It will take care of installing and removing dependencies.
