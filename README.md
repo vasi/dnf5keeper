@@ -112,7 +112,7 @@ These are great tools to set up systems. But they're designed for production sys
 
 * aptkeeper will overwrite your apt-mark and debfoster keepers. I think of this as a feature, since it makes it easier to use all these tools together. But you might not! Aptkeeper does keep backups in /var/lib/apt/extended_states.bak and /var/lib/debfoster/keepers.bak
 * Your .keep files are __not__ a full description of the packages installed on your system. Apt dependencies can be optional, or can have multiple packages that satisfy a given dependency, and there's no way for aptkeeper to understand your intentions. Typically it works, but if you need to have absolutely identical packages on different systems, use a different solution like `dpkg --get-selections`.
-* aptkeeper may consider "Recommends" or "Suggests" dependencies as important enough to keep the dependent package installed. You can change this by setting the apt configuration option APT::AutoRemove::RecommendsImportant / SuggestsImportant.
+* aptkeeper may consider "Recommends" or "Suggests" dependencies as important enough to keep the dependent package installed. You can change this by setting the apt configuration option APT::AutoRemove::RecommendsImportant / SuggestsImportant. You may also want to regularly look for broken recommends: `aptitude search '~RBrecommends:~i'`.
 
 ## Inspiration
 
