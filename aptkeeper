@@ -18,6 +18,7 @@ class AptKeeper
     return Set.new unless path.file?
     path.readlines
     .map { |l| l.sub(/#.*$/, '').strip }
+    .flat_map { |l| l.split(/\s+/) }
     .reject(&:empty?)
     .to_set
   end
@@ -97,7 +98,7 @@ class AptKeeper
     basename = File.basename(basename, '.keep') # in case user accidentally added .keep
     comment = reason.empty? ? "" : " # #{reason}"
     CONFDIR.join(basename + '.keep').open('a') do |f|
-      packages.each { |p| f.puts "#{p}#{comment}" }
+      f.puts "#{packages.join(" ")}#{comment}"
     end
   end
 end

@@ -17,11 +17,21 @@ It can be hard to remember why I've installed all the packages on my system. Thi
 * Copy `aptkeeper` somewhere in your PATH, for example ~/bin or /usr/local/bin.
 * Create a directory ~/.config/aptkeeper to declare your packages
   * Inside that directory, create one or more files with the extension `.keep`.
-  * Each file should contain a list of packages you want to keep installed, one per line. Comments starting with '#' are allowed, as are blank lines.
+  * Each file should contain a list of packages you want to keep installed. Comments starting with '#' are allowed, as are blank lines.
   * You can get a reasonable initial list of packages with `aptkeeper candidates`
 * Once you think you're satisfied, run `aptkeeper diff`. It will tell you what it thinks needs removing or installing.
   * Then, run `aptkeeper sync` to do the installation or removal! It will take care of installing and removing dependencies.
 * Later, when you want to make changes, just edit your .keep files, then run `aptkeeper sync`
+
+An example .keep file might look like:
+```
+# Browsers
+firefox
+chromium
+epiphany-browser # aka "Gnome Web"
+
+ripgrep tmux git # CLI tools
+```
 
 ## Tips
 
@@ -102,7 +112,7 @@ These are great tools to set up systems. But they're designed for production sys
 
 * aptkeeper will overwrite your apt-mark and debfoster keepers. I think of this as a feature, since it makes it easier to use all these tools together. But you might not! Aptkeeper does keep backups in /var/lib/apt/extended_states.bak and /var/lib/debfoster/keepers.bak
 * Your .keep files are __not__ a full description of the packages installed on your system. Apt dependencies can be optional, or can have multiple packages that satisfy a given dependency, and there's no way for aptkeeper to understand your intentions. Typically it works, but if you need to have absolutely identical packages on different systems, use a different solution like `dpkg --get-selections`.
-* aptkeeper considers "Recommends" dependencies as important enough to keep the dependent package installed. You can change this by setting the apt configuration option APT::AutoRemove::RecommendsImportant.
+* aptkeeper may consider "Recommends" or "Suggests" dependencies as important enough to keep the dependent package installed. You can change this by setting the apt configuration option APT::AutoRemove::RecommendsImportant / SuggestsImportant.
 
 ## Inspiration
 
