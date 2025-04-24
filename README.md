@@ -103,6 +103,7 @@ These are great tools to set up systems. But they're designed for production sys
 
 ## Caveats
 
+* dnf5keeper doesn't do _anything_ with "group" dependencies. Many packages are dependents of "groups", and groups may be dependents of "environments". These remain managed by only dnf. Dnf5keeper won't remove packages that are depended on by groups, but also won't encourage you to list them.
 * dnf5keeper will overwrite your DNF reasons file. I think of this as a feature, since it makes it easier to use all these tools together. But you might not! Dnf5keeper does keep backups in /usr/lib/sysimage/libdnf5/packages.toml.bak
 * Your .keep files are __not__ a full description of the packages installed on your system. DNF dependencies can be optional, or can have multiple packages that satisfy a given dependency, and there's no way for dnf5keeper to understand your intentions. Typically it works, but if you need to have absolutely identical packages on different systems, use a different solution .
 * dnf5keeper may consider optional dependencies as important enough to keep the dependent package installed. I'm not sure whether there's a way to configure this.
