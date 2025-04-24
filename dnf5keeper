@@ -2,15 +2,15 @@
 require 'etc'
 require 'pathname'
 require 'set'
+require 'socket'
 require 'tempfile'
 
-# Declarative package management with apt!
+# Declarative package management with dnf!
 
-class AptKeeper
+class Dnf5Keeper
   HOME = Dir.home(Etc.getlogin) # Get user's home dir even if using sudo
-  CONFDIR = Pathname.new(HOME).join('.config', 'aptkeeper')
-  EXTENDED_STATES = Pathname.new('/var/lib/apt/extended_states')
-  DEBFOSTER = Pathname.new('/var/lib/debfoster/keepers')
+  CONFDIR = Pathname.new(HOME).join('.config', 'dnf5keeper')
+  PACKAGE_STATE = Pathname.new('/usr/lib/sysimage/libdnf5/packages.toml')
 
   attr_reader :keepers
 
@@ -23,18 +23,48 @@ class AptKeeper
     .to_set
   end
   
+  def load_reasons
+    @by_pkg = {}
+    @by_reason = Hash.new { |h, k| h[k] = Set.new }
+    IO.popen("dnf repoquery --installed --queryformat '%{name}\#%{reason}\n'")
+        .readlines.each do |line|
+      line.chomp!
+      pkg, reason = line.split('#')
+      @by_pkg[pkg] = reason
+      @by_reason[reason] << pkg
+    end
+  end
+
+  def akmods
+    # Anything built on current host is likely to be an akmod
+    hostname = Socket.gethostname
+    IO.popen(['rpm', '-qa', '--qf', '%{NAME}#%{BUILDHOST}\n', 'kmod*'])
+        .readlines.flat_map do |line|
+      line.chomp!
+      pkg, host = line.split('#')
+      host == hostname ? [pkg] : []
+    end.to_set
+  end
+
   def initialize
     CONFDIR.mkpath
-
-    @auto = IO.popen('apt-mark showauto').readlines.map(&:chomp).to_set
-    @manual = IO.popen('apt-mark showmanual').readlines.map(&:chomp).to_set
+    load_reasons
     @keepers = CONFDIR.children
       .select { |p| p.file? && p.extname == '.keep' }
       .reduce(Set.new) { |ks, p| ks.merge(read_package_list(p)) }
+    @keepers += akmods
+  end
+
+  def auto
+    @auto ||= @by_reason.flat_map { |k,v| k == 'User'? [] : v }.to_set
+  end
+
+  def manual
+    @by_reason['User']
   end
 
   def installed
-    @auto + @manual
+    auto + manual
   end
 
   def print(pkgs, header = nil)
@@ -47,30 +77,8 @@ class AptKeeper
     @keepers - installed
   end
 
-  def simulate_autoremove(auto)
-    states = Tempfile.new('states')
-    system('apt-mark', '-f', states.path, 'auto', *auto, out: :close)
-    removed = Set.new
-    cmd = ['apt-get', '--simulate', '-o', "dir::state::extended_states=#{states.path}", 'autoremove']
-    IO.popen(cmd).each do |line|
-      md = /^Remv (\S*)/.match(line) or next
-      removed << md[1]
-    end
-    states.unlink
-    removed
-  end
-
-  def toplevel
-    IO.popen(['aptitude', 'search', '~i!~Rdepends:~i', '-F' '%p'])
-      .readlines.map(&:chomp).to_set
-  end
-
-  def unneeded
-    simulate_autoremove(installed - @keepers)
-  end
-
-  def leaves
-    unneeded & toplevel
+  def candidates
+    manual - @keepers
   end
 
   def backup(file)
@@ -79,19 +87,12 @@ class AptKeeper
   end
 
   def write_root_keepers
-    backup(EXTENDED_STATES)
-    backup(DEBFOSTER)
+    backup(PACKAGE_STATE)
 
-    new_manual = @auto & @keepers
-    new_auto = @manual - @keepers
-    system('apt-mark', 'manual', *new_manual.to_a, out: :close) if new_manual.any?
-    system('apt-mark', 'auto', *new_auto.to_a, out: :close) if new_auto.any?
-
-    if DEBFOSTER.file?
-      DEBFOSTER.open('w') do |f|
-        @keepers.sort.each { |p| f.puts p }
-      end
-    end
+    new_manual = auto & keepers
+    new_auto = manual - keepers
+    system('dnf', 'mark', '-y', 'user', *new_manual.to_a, out: :close) if new_manual.any?
+    system('dnf', 'mark', '-y', 'dependency', *new_auto.to_a, out: :close) if new_auto.any?
   end
 
   def add_keepers(basename, reason, packages)
@@ -101,9 +102,13 @@ class AptKeeper
       f.puts "#{packages.join(" ")}#{comment}"
     end
   end
+
+  def external
+    @by_reason['External User']
+  end
 end
 
-ak = AptKeeper.new
+ak = Dnf5Keeper.new
 orig_argv = ARGV.dup
 FORCE_RERUN = ['force']
 rerun_root = ->(list, &block) do
@@ -125,52 +130,54 @@ when 'keepers'
   ak.print(ak.keepers)
 when 'missing'
   ak.print(ak.missing)
-when 'unneeded'
-  ak.print(ak.unneeded)
 when 'candidates'
-  ak.print(ak.leaves)
+  ak.print(ak.candidates)
 when 'diff'
-  unneeded = ak.unneeded
-  puts "Nothing to do" unless ak.missing.any? || unneeded.any?
+  puts "Nothing to do" unless ak.missing.any? || ak.candidates.any?
   ak.print(ak.missing, "To install:") if ak.missing.any?
-  ak.print(unneeded, "To remove:") if unneeded.any?
+  ak.print(ak.candidates, "To mark for removal:") if ak.candidates.any?
 when 'install'
-  rerun_root[ak.missing] { |ps| exec('apt', 'install', *ps) }
+  rerun_root[ak.missing] { |ps| exec('dnf', 'install', *ps) }
 when 'remove'
-  rerun_root[ak.unneeded] { exec('apt', 'autoremove') }
+  # We can't tell if anything is pending autoremove, so force it
+  rerun_root[FORCE_RERUN] { exec('dnf', 'autoremove') }
 when 'sync'
-  rerun_root[ak.missing + ak.unneeded] do
-    exec('apt', '--autoremove', 'install', *ak.missing)
+  rerun_root[FORCE_RERUN] do
+    system('dnf', 'install', *ak.missing) if ak.missing.any?
+    exec('dnf', 'autoremove')
   end
-when 'update-apt'
+when 'update-reasons'
   rerun_root[FORCE_RERUN] { }
 when 'add'
   basename, reason, *adding = ARGV
   if adding.empty?
-    $stderr.puts "Usage: aptkeeper add BASENAME REASON PACKAGE [PACKAGE...]"
+    $stderr.puts "Usage: dnf5keeper add BASENAME REASON PACKAGE [PACKAGE...]"
     exit 2
   end
   ak.add_keepers(basename, reason, adding) unless Process.uid == 0
   rerun_root[adding] do |ps|
-    exec('apt', 'install', *ps)
+    exec('dnf', 'install', *ps)
   end
+when 'external'
+  ak.print(ak.external)
 else
   $stderr.puts <<~EOD
-    Usage: aptkeeper [command]
+    Usage: dnf5keeper [command]
     Commands:
       keepers - list packages in .keep files
 
       missing - list packages that need installing to match .keep files
-      unneeded - list packages that need removal to match .keep files
       candidates - list top-level packages that need removal
-      diff - list packages that need installing or removal
+      diff - list packages that need installing or marking for removal
 
       install - install missing packages
       remove - remove unneeded packages
       sync - install missing and remove unneeded packages
-      update-apt - update apt-mark / debfoster database
+      update-reasons - update dnf reason database
 
       add REASON PACKAGE ... - add packages to keepers, and install them
+
+      external - identify "external" packages, which should probably be marked otherwise
     EOD
   exit 2
 end
