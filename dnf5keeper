@@ -3,14 +3,15 @@ require 'etc'
 require 'pathname'
 require 'set'
 require 'socket'
-require 'tempfile'
+require 'tmpdir'
 
 # Declarative package management with dnf!
 
 class Dnf5Keeper
   HOME = Dir.home(Etc.getlogin) # Get user's home dir even if using sudo
   CONFDIR = Pathname.new(HOME).join('.config', 'dnf5keeper')
-  PACKAGE_STATE = Pathname.new('/usr/lib/sysimage/libdnf5/packages.toml')
+  STATE_DIR = Pathname.new('/usr/lib/sysimage/libdnf5')
+  PACKAGE_STATE = 'packages.toml'
 
   attr_reader :keepers
 
@@ -73,6 +74,47 @@ class Dnf5Keeper
     pkgs.sort.each { |p| puts "#{prefix}#{p}" }
   end
 
+  def default_arch
+    @arch ||= IO.popen('dnf --dump-variables').read.scan(/^arch = (\S+)/).flatten
+  end
+
+  def create_state(new_auto)
+    Dir.mktmpdir do |tmp|
+      state = Pathname.new(tmp) + 'state'
+      FileUtils.cp_r(STATE_DIR, state)
+
+      packages = state + PACKAGE_STATE
+      contents = packages.read
+      new_auto.each do |pkg|
+        esc = Regexp.escape(pkg)
+        # Very dependent on exact format of file, but don't want to pull in a full toml parser
+        re = /^("#{esc}(?:\.[^'"]+)?" = \{reason = ")[^"]+\"/
+        next_contents = contents.sub(re, '\1Dependency"')
+        raise "Can't simulate reason for #{pkg}" if next_contents == contents
+        contents = next_contents
+      end
+      packages.write(contents)
+
+      yield state
+    end
+  end
+
+
+  def simulate_autoremove(new_auto)
+    remove = Set.new
+    default_arches = [default_arch, 'noarch']
+    create_state(new_auto) do |state|
+      IO.popen(['dnf', "--setopt=system_state_dir=#{state}", 'list',  '--autoremove'])
+          .readlines.each do |line|
+        md = /^(\S+)\.(\S+)/.match(line) or next
+        pkg, arch = md.captures
+        pkg += ".#{arch}" unless arch in default_arches
+        remove << pkg
+      end
+    end
+    remove
+  end
+
   def missing
     @keepers - installed
   end
@@ -81,13 +123,17 @@ class Dnf5Keeper
     manual - @keepers
   end
 
+  def unneeded
+    @unneeded ||= simulate_autoremove(candidates)
+  end
+
   def backup(file)
     bak = Pathname.new(file.to_s + '.bak')
     FileUtils.cp(file, bak) if file.file?
   end
 
   def write_root_keepers
-    backup(PACKAGE_STATE)
+    backup(STATE_DIR + PACKAGE_STATE)
 
     new_manual = auto & keepers
     new_auto = manual - keepers
@@ -130,21 +176,23 @@ when 'keepers'
   ak.print(ak.keepers)
 when 'missing'
   ak.print(ak.missing)
+when 'unneeded'
+  ak.print(ak.unneeded)
 when 'candidates'
   ak.print(ak.candidates)
 when 'diff'
-  puts "Nothing to do" unless ak.missing.any? || ak.candidates.any?
+  puts "Nothing to do" unless ak.missing.any? || ak.unneeded.any?
   ak.print(ak.missing, "To install:") if ak.missing.any?
-  ak.print(ak.candidates, "To mark for removal:") if ak.candidates.any?
+  ak.print(ak.unneeded, "To remove:") if ak.unneeded.any?
 when 'install'
   rerun_root[ak.missing] { |ps| exec('dnf', 'install', *ps) }
 when 'remove'
   # We can't tell if anything is pending autoremove, so force it
-  rerun_root[FORCE_RERUN] { exec('dnf', 'autoremove') }
+  rerun_root[ak.unneeded] { exec('dnf', 'autoremove') }
 when 'sync'
-  rerun_root[FORCE_RERUN] do
+  rerun_root[ak.missing + ak.unneeded] do
     system('dnf', 'install', *ak.missing) if ak.missing.any?
-    exec('dnf', 'autoremove')
+    exec('dnf', 'autoremove') if ak.unneeded.any?
   end
 when 'update-reasons'
   rerun_root[FORCE_RERUN] { }
@@ -167,8 +215,9 @@ else
       keepers - list packages in .keep files
 
       missing - list packages that need installing to match .keep files
+      unneeded - list packages that need removal to match .keep files
       candidates - list top-level packages that need removal
-      diff - list packages that need installing or marking for removal
+      diff - list packages that need installing or removal
 
       install - install missing packages
       remove - remove unneeded packages
