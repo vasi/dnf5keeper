@@ -224,7 +224,7 @@ else
       sync - install missing and remove unneeded packages
       update-reasons - update dnf reason database
 
-      add REASON PACKAGE ... - add packages to keepers, and install them
+      add FILE REASON PACKAGE ... - add packages to keepers, and install them
 
       external - identify "external" packages, which should probably be marked otherwise
     EOD
